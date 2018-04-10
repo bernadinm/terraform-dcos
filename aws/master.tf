@@ -208,7 +208,6 @@ resource "null_resource" "master" {
 
   count = "${var.num_of_masters}"
 
-  # Wait for bootstrapnode to be ready
   provisioner "remote-exec" {
     inline = [
      "sudo mkdir -p /run/dcos/etc/",

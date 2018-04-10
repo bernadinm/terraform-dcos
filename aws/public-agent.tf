@@ -139,7 +139,6 @@ resource "null_resource" "public-agent" {
 
   count = "${var.num_of_public_agents}"
 
-  # Wait for bootstrapnode to be ready
   provisioner "remote-exec" {
     inline = [
      "sudo mkdir -p /run/dcos/etc/",
