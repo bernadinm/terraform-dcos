@@ -16,7 +16,7 @@ variable "aws_gpu_agent_instance_type" {
 
 # AMI Zone US-WEST-2
 variable "aws_gpu_ami" {
- default = "ami-9b5d97fb"
+ default = "ami-d54a2cad"
 }
 
 # AWS Resourece Agent for GPUs
@@ -26,6 +26,8 @@ resource "aws_instance" "gpu-agent" {
   connection {
     # The default username for our AMI
     user = "centos"
+    private_key = "${local.private_key}"
+    agent = "${local.agent}"
 
     # The connection will use the local SSH agent for authentication.
   }
@@ -50,31 +52,31 @@ resource "aws_instance" "gpu-agent" {
   ami = "${var.aws_gpu_ami}"      
 
   # The name of our SSH keypair we created above.
-  key_name = "${var.key_name}"
+  key_name = "${var.ssh_key_name}"
 
-  # Our Security group to allow http and SSH access
-  vpc_security_group_ids = ["${aws_security_group.private_slave.id}","${aws_security_group.admin.id}","${aws_security_group.any_access_internal.id}"]
+  # Our Security group to allow http, SSH, and outbound internet access only for pulling containers from the web
+  vpc_security_group_ids = ["${aws_security_group.private_slave.id}", "${aws_security_group.any_access_internal.id}", "${aws_security_group.ssh.id}", "${aws_security_group.internet-outbound.id}"]
 
   # We're going to launch into the same subnet as our ELB. In a production
   # environment it's more common to have a separate private subnet for
   # backend instances.
   subnet_id = "${aws_subnet.private.id}"
 
-  # OS init script
-  provisioner "file" {
-   source = "modules/dcos-tested-aws-oses/platform/cloud/aws/centos_7.2/setup.sh"
-   destination = "/tmp/os-setup.sh"
-   }
-
- # We run a remote provisioner on the instance after creating it.
-  # In this case, we just install nginx and start it. By default,
-  # this should be on port 80
-    provisioner "remote-exec" {
-    inline = [
-      "sudo chmod +x /tmp/os-setup.sh",
-      "sudo bash /tmp/os-setup.sh",
-    ]
-  }
+#  # OS init script
+#  provisioner "file" {
+#   source = "modules/dcos-tested-aws-oses/platform/cloud/aws/centos_7.2/setup.sh"
+#   destination = "/tmp/os-setup.sh"
+#   }
+#
+# # We run a remote provisioner on the instance after creating it.
+#  # In this case, we just install nginx and start it. By default,
+#  # this should be on port 80
+#    provisioner "remote-exec" {
+#    inline = [
+#      "sudo chmod +x /tmp/os-setup.sh",
+#      "sudo bash /tmp/os-setup.sh",
+#    ]
+#  }
 
   lifecycle {
     ignore_changes = ["tags.Name"]
@@ -84,7 +86,7 @@ resource "aws_instance" "gpu-agent" {
 
 # Create DCOS Mesos Agent Scripts to execute
 module "dcos-mesos-gpu-agent" {
-  source               = "github.com/bernadinm/tf_dcos_core"
+  source               = "github.com/dcos/tf_dcos_core"
   bootstrap_private_ip = "${aws_instance.bootstrap.private_ip}"
   dcos_install_mode    = "${var.state}"
   dcos_version         = "${var.dcos_version}"
@@ -104,6 +106,8 @@ resource "null_resource" "gpu-agent" {
   connection {
     host = "${element(aws_instance.gpu-agent.*.public_ip, count.index)}"
     user = "centos"
+    private_key = "${local.private_key}"
+    agent = "${local.agent}"
   }
 
   count = "${var.num_of_gpu_agents}"
@@ -117,7 +121,7 @@ resource "null_resource" "gpu-agent" {
   # Wait for bootstrapnode to be ready
   provisioner "remote-exec" {
     inline = [
-     "until $(curl --output /dev/null --silent --head --fail http://${aws_instance.bootstrap.private_ip}/dcos_install.sh); do printf 'waiting for bootstrap node to serve...'; sleep 20; done"
+     "until $(curl --output /dev/null --silent --head --fail http://${aws_instance.bootstrap.private_ip}:${var.custom_dcos_bootstrap_port}/dcos_install.sh); do printf 'waiting for bootstrap node to serve...'; sleep 20; done"
     ]
   }
 
@@ -130,7 +134,6 @@ resource "null_resource" "gpu-agent" {
   }
 }
 
-output "GPU Private Public IP Address" {
+output "GPU Public IPs" {
   value = ["${aws_instance.gpu-agent.*.public_ip}"]
 }
-

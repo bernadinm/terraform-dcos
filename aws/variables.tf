@@ -1,6 +1,13 @@
-variable "key_name" {
-  description = "Key name assicated with your instances for login"
+variable "ssh_key_name" {
+  description = "ssh key name associated with your instances for login"
   default = "default"
+}
+
+variable "ssh_private_key_filename" {
+ # cannot leave this empty as the file() interpolation will fail later on for the private_key local variable
+ # https://github.com/hashicorp/terraform/issues/15605
+ default = "/dev/null"
+ description = "Path to file containing your ssh private key"
 }
 
 variable "user" {
@@ -33,9 +40,19 @@ variable "aws_master_instance_type" {
   default = "m3.xlarge"
 }
 
+variable "aws_master_instance_disk_size" {
+  description = "AWS DC/OS Master instance type default size of the root disk (GB)"
+  default = "60"
+}
+
 variable "aws_agent_instance_type" {
   description = "AWS DC/OS Private Agent instance type"
   default = "m3.xlarge"
+}
+
+variable "aws_agent_instance_disk_size" {
+  description = "AWS DC/OS Private Agent instance type default size of the root disk (GB)"
+  default = "60"
 }
 
 variable "aws_public_agent_instance_type" {
@@ -43,9 +60,19 @@ variable "aws_public_agent_instance_type" {
   default = "m3.xlarge"
 }
 
+variable "aws_public_agent_instance_disk_size" {
+  description = "AWS DC/OS Public instance type default size of the root disk (GB)"
+  default = "60"
+}
+
 variable "aws_bootstrap_instance_type" {
   description = "AWS DC/OS Bootstrap instance type"
   default = "m3.large"
+}
+
+variable "aws_bootstrap_instance_disk_size" {
+  description = "AWS DC/OS bootstrap instance type default size of the root disk (GB)"
+  default = "60"
 }
 
 variable "num_of_private_agents" {
@@ -113,8 +140,8 @@ variable "dcos_security" {
 }
 
 variable "dcos_resolvers" {
- default = [ "8.8.8.8", "8.8.4.4" ]
- description = "DNS Resolver for external name resolution"
+ default = [ "169.254.169.253" ]
+ description = "DNS Resolver for internal name resolution. Points to Amazon DNS server which can resolve external addresses."
 }
 
 variable "dcos_oauth_enabled" {
@@ -122,8 +149,13 @@ variable "dcos_oauth_enabled" {
  description = "DC/OS Open Flag for Open Auth"
 }
 
+variable "dcos_master_external_loadbalancer" {
+ default = ""
+ description = "Used to allow DC/OS to set any required certs. Used for DC/OS EE."
+}
+
 variable "dcos_master_discovery" {
- default = "static"
+ default = "master_http_loadbalancer"
  description = "Ability to use an ELB or a static list for master descovery"
 }
 
@@ -158,7 +190,7 @@ variable "dcos_aws_template_storage_secret_access_key" {
 }
 
 variable "dcos_exhibitor_storage_backend" {
- default = "static"
+ default = "aws_s3"
  description = "specify an external storage system (static, zookeeper, azure, and aws_s3)"
 }
 
@@ -188,7 +220,7 @@ variable "dcos_aws_secret_access_key" {
 }
 
 variable "dcos_exhibitor_explicit_keys" {
- default = ""
+ default = "false"
  description = "This parameter specifies whether you are using AWS API keys to grant Exhibitor access to S3."
 }
 
@@ -381,13 +413,8 @@ variable "dcos_previous_version" {
 }
 
 variable "dcos_version" {
- default = "1.10.0"
+ default = "1.11.0"
  description = "DCOS Version"
-}
-
-variable "dcos-type" {
- default = "open"
- description = "DCOS type, either ee or open."
 }
 
 variable "dcos_cluster_docker_credentials" {
@@ -453,12 +480,7 @@ variable "dcos_ip_detect_public_contents" {
  description = "Used for AWS to determine the public IP. DC/OS bug requires this variable instead of a file see https://jira.mesosphere.com/browse/DCOS_OSS-905 for more information."
 }
 
-# Core OS
-variable "aws_amis" {
-  default = {
-    eu-west-1 = "ami-163e7e65"
-    us-east-1 = "ami-21732036"
-    us-west-1 = "ami-161a5176"
-    us-west-2 = "ami-078d5367"
-  }
+variable "kubernetes_cluster" {
+ default = "kubernetes-cluster"
+ description = "Kubernetes cluster tag"
 }

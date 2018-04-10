@@ -5,12 +5,14 @@ resource "aws_instance" "bootstrap" {
   connection {
     # The default username for our AMI
     user = "${module.aws-tested-oses.user}"
+    private_key = "${local.private_key}"
+    agent = "${local.agent}"
 
     # The connection will use the local SSH agent for authentication.
   }
 
   root_block_device {
-    volume_size = "${var.instance_disk_size}"
+    volume_size = "${var.aws_bootstrap_instance_disk_size}"
   }
 
   instance_type = "${var.aws_bootstrap_instance_type}"
@@ -27,10 +29,11 @@ resource "aws_instance" "bootstrap" {
   ami = "${module.aws-tested-oses.aws_ami}"
 
   # The name of our SSH keypair we created above.
-  key_name = "${var.key_name}"
+  key_name = "${var.ssh_key_name}"
 
-  # Our Security group to allow http and SSH access
-  vpc_security_group_ids = ["${aws_security_group.master.id}","${aws_security_group.admin.id}"]
+  # Our Security group to allow http, SSH, and outbound internet access only for pulling containers from the web
+  vpc_security_group_ids = ["${aws_security_group.any_access_internal.id}", "${aws_security_group.ssh.id}", "${aws_security_group.internet-outbound.id}"]
+
 
   # We're going to launch into the same subnet as our ELB. In a production
   # environment it's more common to have a separate private subnet for
@@ -67,9 +70,10 @@ resource "aws_instance" "bootstrap" {
 
 # Create DCOS Mesos Master Scripts to execute
   module "dcos-bootstrap" {
-    source = "github.com/bernadinm/tf_dcos_core"
+    source = "github.com/dcos/tf_dcos_core"
     bootstrap_private_ip = "${aws_instance.bootstrap.private_ip}"
-    dcos_install_mode = "${var.state}"
+    # Only allow upgrade and install as installation mode
+    dcos_install_mode = "${var.state == "upgrade" ? "upgrade" : "install"}"
     dcos_version = "${var.dcos_version}"
     role = "dcos-bootstrap"
     dcos_bootstrap_port = "${var.custom_dcos_bootstrap_port}"
@@ -110,6 +114,7 @@ resource "aws_instance" "bootstrap" {
     dcos_http_proxy = "${var.dcos_http_proxy}"
     dcos_https_proxy = "${var.dcos_https_proxy}"
     dcos_log_directory = "${var.dcos_log_directory}"
+    dcos_master_external_loadbalancer = "${coalesce(var.dcos_master_external_loadbalancer, aws_elb.public-master-elb.dns_name)}"
     dcos_master_discovery = "${var.dcos_master_discovery}"
     dcos_master_dns_bindall = "${var.dcos_master_dns_bindall}"
     # TODO(bernadinm) Terraform Bug: 9488.  Templates will not accept list, but only strings.
@@ -149,12 +154,15 @@ resource "aws_instance" "bootstrap" {
  }
 
 resource "null_resource" "bootstrap" {
+  # If state is set to none do not install DC/OS
+  count = "${var.state == "none" ? 0 : 1}"
   # Changes to any instance of the cluster requires re-provisioning
   triggers {
     cluster_instance_ids = "${aws_instance.bootstrap.id}"
     dcos_version = "${var.dcos_version}"
     dcos_security = "${var.dcos_security}"
     num_of_masters = "${var.num_of_masters}"
+    dcos_bootstrap_port = "${var.custom_dcos_bootstrap_port}"
     dcos_audit_logging = "${var.dcos_audit_logging}"
     dcos_auth_cookie_secure_flag = "${var.dcos_auth_cookie_secure_flag}"
     dcos_aws_access_key_id = "${var.dcos_aws_access_key_id}"
@@ -172,6 +180,7 @@ resource "null_resource" "bootstrap" {
     dcos_cluster_docker_credentials_dcos_owned = "${var.dcos_cluster_docker_credentials_dcos_owned}"
     dcos_cluster_docker_credentials_enabled = "${var.dcos_cluster_docker_credentials_enabled}"
     dcos_cluster_docker_credentials_write_to_etc = "${var.dcos_cluster_docker_credentials_write_to_etc}"
+    dcos_cluster_name  = "${coalesce(var.dcos_cluster_name, data.template_file.cluster-name.rendered)}"
     dcos_customer_key = "${var.dcos_customer_key}"
     dcos_dns_search = "${var.dcos_dns_search}"
     dcos_docker_remove_delay = "${var.dcos_docker_remove_delay}"
@@ -187,6 +196,7 @@ resource "null_resource" "bootstrap" {
     dcos_http_proxy = "${var.dcos_http_proxy}"
     dcos_https_proxy = "${var.dcos_https_proxy}"
     dcos_log_directory = "${var.dcos_log_directory}"
+    dcos_master_external_loadbalancer = "${coalesce(var.dcos_master_external_loadbalancer, aws_elb.public-master-elb.dns_name)}"
     dcos_master_discovery = "${var.dcos_master_discovery}"
     dcos_master_dns_bindall = "${var.dcos_master_dns_bindall}"
     # TODO(bernadinm) Terraform Bug: 9488.  Templates will not accept list, but only strings.
@@ -228,6 +238,8 @@ resource "null_resource" "bootstrap" {
   connection {
     host = "${element(aws_instance.bootstrap.*.public_ip, 0)}"
     user = "${module.aws-tested-oses.user}"
+    private_key = "${local.private_key}"
+    agent = "${local.agent}"
   }
 
   # Generate and upload bootstrap script to node
@@ -249,6 +261,6 @@ resource "null_resource" "bootstrap" {
   }
 }
 
-output "Bootstrap Public IP Address" {
+output "Bootstrap Host Public IP" {
   value = "${aws_instance.bootstrap.public_ip}"
 }
