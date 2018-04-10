@@ -5,16 +5,19 @@ resource "aws_instance" "agent" {
   connection {
     # The default username for our AMI
     user = "${module.aws-tested-oses.user}"
+    private_key = "${local.private_key}"
+    agent = "${local.agent}"
 
     # The connection will use the local SSH agent for authentication.
   }
 
   root_block_device {
-    volume_size = "${var.instance_disk_size}"
+    volume_size = "${var.aws_agent_instance_disk_size}"
   }
 
   count = "${var.num_of_private_agents}"
   instance_type = "${var.aws_agent_instance_type}"
+  iam_instance_profile = "${aws_iam_instance_profile.agent.name}"
 
   ebs_optimized = "true"
 
@@ -23,16 +26,18 @@ resource "aws_instance" "agent" {
    expiration = "${var.expiration}"
    Name =  "${data.template_file.cluster-name.rendered}-pvtagt-${count.index + 1}"
    cluster = "${data.template_file.cluster-name.rendered}"
+   KubernetesCluster = "${var.kubernetes_cluster}"
   }
+
   # Lookup the correct AMI based on the region
   # we specified
   ami = "${module.aws-tested-oses.aws_ami}"
 
   # The name of our SSH keypair we created above.
-  key_name = "${var.key_name}"
+  key_name = "${var.ssh_key_name}"
 
-  # Our Security group to allow http and SSH access
-  vpc_security_group_ids = ["${aws_security_group.private_slave.id}","${aws_security_group.admin.id}","${aws_security_group.any_access_internal.id}"]
+  # Our Security group to allow http, SSH, and outbound internet access only for pulling containers from the web
+  vpc_security_group_ids = ["${aws_security_group.private_slave.id}", "${aws_security_group.any_access_internal.id}", "${aws_security_group.ssh.id}", "${aws_security_group.internet-outbound.id}"]
 
   # We're going to launch into the same subnet as our ELB. In a production
   # environment it's more common to have a separate private subnet for
@@ -58,19 +63,24 @@ resource "aws_instance" "agent" {
   lifecycle {
     ignore_changes = ["tags.Name"]
   }
+
 }
 
 # Create DCOS Mesos Agent Scripts to execute
 module "dcos-mesos-agent" {
-  source               = "github.com/bernadinm/tf_dcos_core"
+  source               = "github.com/dcos/tf_dcos_core"
   bootstrap_private_ip = "${aws_instance.bootstrap.private_ip}"
-  dcos_install_mode    = "${var.state}"
+  dcos_bootstrap_port  = "${var.custom_dcos_bootstrap_port}"
+  # Only allow upgrade and install as installation mode
+  dcos_install_mode = "${var.state == "upgrade" ? "upgrade" : "install"}"
   dcos_version         = "${var.dcos_version}"
   role                 = "dcos-mesos-agent"
 }
 
 # Execute generated script on agent
 resource "null_resource" "agent" {
+  # If state is set to none do not install DC/OS
+  count = "${var.state == "none" ? 0 : var.num_of_private_agents}"
   # Changes to any instance of the cluster requires re-provisioning
   triggers {
     cluster_instance_ids = "${null_resource.bootstrap.id}"
@@ -81,9 +91,20 @@ resource "null_resource" "agent" {
   connection {
     host = "${element(aws_instance.agent.*.public_ip, count.index)}"
     user = "${module.aws-tested-oses.user}"
+    private_key = "${local.private_key}"
+    agent = "${local.agent}"
   }
 
   count = "${var.num_of_private_agents}"
+
+  # Wait for bootstrapnode to be ready
+  provisioner "remote-exec" {
+    inline = [
+     "sudo mkdir -p /run/dcos/etc/",
+     "sudo echo 'MESOS_CREDENTIAL=/run/dcos/etc/credentials' | sudo tee /run/dcos/etc/mesos-slave",
+     "sudo echo '{\"principal\":\"principal1\",\"secret\":\"secret1\"}' | sudo tee /run/dcos/etc/credentials"
+    ]
+  }
 
   # Generate and upload Agent script to node
   provisioner "file" {
@@ -94,7 +115,7 @@ resource "null_resource" "agent" {
   # Wait for bootstrapnode to be ready
   provisioner "remote-exec" {
     inline = [
-     "until $(curl --output /dev/null --silent --head --fail http://${aws_instance.bootstrap.private_ip}/dcos_install.sh); do printf 'waiting for bootstrap node to serve...'; sleep 20; done"
+     "until $(curl --output /dev/null --silent --head --fail http://${aws_instance.bootstrap.private_ip}:${var.custom_dcos_bootstrap_port}/dcos_install.sh); do printf 'waiting for bootstrap node to serve...'; sleep 20; done"
     ]
   }
 
@@ -107,6 +128,6 @@ resource "null_resource" "agent" {
   }
 }
 
-output "Private Agent Public IP Address" {
+output "Private Agent Public IPs" {
   value = ["${aws_instance.agent.*.public_ip}"]
 }
