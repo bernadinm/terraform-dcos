@@ -120,7 +120,10 @@ resource "aws_instance" "bootstrap" {
     # TODO(bernadinm) Terraform Bug: 9488.  Templates will not accept list, but only strings.
     # Workaround is to flatten the list as a string below. Fix when this is closed.
     dcos_master_list = "\n - ${join("\n - ", aws_instance.master.*.private_ip)}"
-    dcos_no_proxy = "${var.dcos_no_proxy}"
+    dcos_use_proxy = "yes"
+    dcos_http_proxy = "http://${aws_instance.bootstrap.private_ip}:3128"
+    dcos_https_proxy = "http://${aws_instance.bootstrap.private_ip}:3128"
+    dcos_no_proxy = "# YAML \n - ${join("\n - ", aws_instance.agent.*.private_ip)}"
     dcos_num_masters = "${var.num_of_masters}"
     dcos_oauth_enabled = "${var.dcos_oauth_enabled}"
     dcos_overlay_config_attempts = "${var.dcos_overlay_config_attempts}"
@@ -260,6 +263,24 @@ resource "null_resource" "bootstrap" {
 
   lifecycle {
     ignore_changes = ["data.template_file.cluster-name.rendered"]
+  }
+}
+
+resource "null_resource" "squid_proxy" {
+  # Bootstrap script can run on any instance of the cluster
+  # So we just choose the first in this case
+  connection {
+    host = "${element(aws_instance.bootstrap.*.public_ip, 0)}"
+    user = "${module.aws-tested-oses.user}"
+    private_key = "${local.private_key}"
+    agent = "${local.agent}"
+  }
+
+  # Install Bootstrap Script
+  provisioner "remote-exec" {
+    inline = [
+      "sudo docker run --name squid -d -p 3128:3128 datadog/squid"
+    ]
   }
 }
 
