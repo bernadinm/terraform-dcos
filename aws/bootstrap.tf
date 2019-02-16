@@ -38,43 +38,39 @@ resource "aws_instance" "bootstrap" {
   # We're going to launch into the same subnet as our ELB. In a production
   # environment it's more common to have a separate private subnet for
   # backend instances.
-  #subnet_id = "${aws_subnet.public.id}"
+  subnet_id = "${aws_subnet.public.id}"
 
-#  network_interface {
-#    network_interface_id = "${aws_network_interface.public.id}"
-#    device_index         = 0
-#  }
-#
-#  network_interface {
-#    network_interface_id = "${aws_network_interface.private.id}"
-#    device_index         = 1
-#  }
-#
+  # OS init script
+  provisioner "file" {
+   content = "${module.aws-tested-oses.os-setup}"
+   destination = "/tmp/os-setup.sh"
+   }
+
+ # We run a remote provisioner on the instance after creating it.
+  # In this case, we just install nginx and start it. By default,
+  # this should be on port 80
+    provisioner "remote-exec" {
+    inline = [
+      "sudo chmod +x /tmp/os-setup.sh",
+      "sudo bash /tmp/os-setup.sh",
+    ]
+  }
+
 
   lifecycle {
     ignore_changes = ["tags.Name"]
   }
 }
 
-resource "aws_network_interface" "public" {
-  subnet_id       = "${aws_subnet.public.id}"
-  private_ips     = ["10.0.0.50"]
-  security_groups = ["${aws_security_group.any_access_internal.id}", "${aws_security_group.ssh.id}", "${aws_security_group.internet-outbound.id}"]
-
-  attachment {
-    instance     = "${aws_instance.bootstrap.id}"
-    device_index = 0
-  }
+resource "aws_network_interface_attachment" "bootstrap" {
+  instance_id          = "${aws_instance.bootstrap.id}"
+  network_interface_id = "${aws_network_interface.private.id}"
+  device_index         = 1
 }
+
 resource "aws_network_interface" "private" {
   subnet_id       = "${aws_subnet.private.id}"
-  private_ips     = ["10.0.0.50"]
-  security_groups = ["${aws_security_group.any_access_internal.id}", "${aws_security_group.ssh.id}", "${aws_security_group.internet-outbound.id}"]
-
-  attachment {
-    instance     = "${aws_instance.bootstrap.id}"
-    device_index = 1
-  }
+   security_groups = ["${aws_security_group.any_access_internal.id}", "${aws_security_group.ssh.id}", "${aws_security_group.internet-outbound.id}"]
 }
 
 output "Bootstrap Host Public IP" {
